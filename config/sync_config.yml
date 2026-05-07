@@ -1,0 +1,70 @@
+# ============================================================
+# sync_config.yml — Notion 동기화 설정
+# PRIORITY-5 | notion-sync.yml 연동
+# ============================================================
+
+sync:
+  version: '1.0'
+  default_mode: incremental   # incremental | full | dry_run
+
+  schedule:
+    daily_cron: '0 0 * * *'  # 09:00 KST (00:00 UTC)
+    timezone: Asia/Seoul
+
+  retry:
+    max_attempts: 3
+    backoff_seconds: [2, 5, 15]
+    on_anchor_miss: replace_content   # 앵커 미발견 시 fallback
+
+# ── 동기화 대상 페이지 ──────────────────────────────────────
+pages:
+
+  - id: '35255ed436f0810f830be1feb1512c28'   # C-33 라이브러리
+    label: 'C33-library'
+    enabled: true
+    tags: [library, session, kg]
+    sections:
+      - banner
+      - kg_table
+      - session
+      - actions
+
+  - id: '35155ed436f081fbb2f1c01d0b85a1b8'   # 세션일지 허브
+    label: 'session-hub'
+    enabled: true
+    tags: [session, hub]
+    sections:
+      - banner
+      - session
+
+  # T-09 Mother Page (향후 추가)
+  # - id: 'YOUR_T09_PAGE_ID'
+  #   label: 'T09-mother'
+  #   enabled: false
+  #   tags: [t09, mother]
+  #   sections: [banner, kg_table, ew_table, session, sop, actions, links]
+
+# ── 전역 섹션 정책 ──────────────────────────────────────────
+section_policy:
+  # SESSION-C33 확정: 작업 유형별 메서드 결정 기준
+  replace_content:
+    - banner          # 갱신 배너 추가 → 최상단 섹션 전체 재작성
+    - kg_table        # KG 테이블 행 추가/변경 → 테이블 전체 교체
+    - ew_table        # EW 트리거 테이블 갱신 → EW 섹션 전체 교체
+    - session         # 세션 히스토리 테이블
+    - actions         # 후속 액션 테이블
+  update_content:
+    - sop             # SOP 기준 — 이스케이프 없는 평문 구간 한정
+    - links           # 관련 링크 — 평문 URL만
+
+# ── 오류 예측 임계값 ────────────────────────────────────────
+error_predictor:
+  block_on: [CRITICAL, HIGH]     # 이 레벨 이상이면 write 중단
+  warn_on:  [MEDIUM]             # 경고만 (진행 허용)
+  danger_patterns:
+    - escape_mismatch:   CRITICAL
+    - table_row:         HIGH
+    - callout_blockquote: HIGH
+    - bold_inline:       MEDIUM
+    - inline_code:       MEDIUM
+    - link:              MEDIUM

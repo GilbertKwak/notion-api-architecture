@@ -1,0 +1,170 @@
+# ============================================================
+# notion-sync.yml — GitHub ↔ Notion 자동 동기화 워크플로우
+# PRIORITY-5 | ROI: 운영 overhead 완전 제거
+# ============================================================
+
+name: Notion Sync
+
+on:
+  # ── 1. 수동 트리거 (즉시 실행)
+  workflow_dispatch:
+    inputs:
+      target_page:
+        description: 'Notion 대상 페이지 ID (비우면 config 기본값 사용)'
+        required: false
+        type: string
+      sync_mode:
+        description: '동기화 모드'
+        required: false
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental   # 변경분만
+          - full          # 전체 재동기화
+          - dry_run       # 검증만 (write 없음)
+
+  # ── 2. push 트리거 — session_logs 커밋 시 자동 Notion 반영
+  push:
+    branches: [main]
+    paths:
+      - 'session_logs/**'
+      - 'config/sync_config.yml'
+
+  # ── 3. 스케줄 — 매일 09:00 KST (00:00 UTC)
+  schedule:
+    - cron: '0 0 * * *'
+
+concurrency:
+  group: notion-sync-${{ github.ref }}
+  cancel-in-progress: false   # 진행 중 sync 취소 금지
+
+jobs:
+  # ============================================================
+  # JOB 1: 사전 검증 (Pre-flight)
+  # ============================================================
+  preflight:
+    name: '🔍 Pre-flight Validation'
+    runs-on: ubuntu-latest
+    outputs:
+      safe_to_sync: ${{ steps.validate.outputs.safe_to_sync }}
+      target_pages: ${{ steps.validate.outputs.target_pages }}
+      sync_mode: ${{ steps.validate.outputs.sync_mode }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # 이전 커밋 비교용
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt --quiet
+
+      - name: Validate & resolve targets
+        id: validate
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          INPUT_TARGET_PAGE: ${{ github.event.inputs.target_page }}
+          INPUT_SYNC_MODE: ${{ github.event.inputs.sync_mode || 'incremental' }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python automation/preflight.py
+
+  # ============================================================
+  # JOB 2: 동기화 실행
+  # ============================================================
+  sync:
+    name: '🔄 Notion Sync'
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.safe_to_sync == 'true'
+    strategy:
+      matrix:
+        page: ${{ fromJson(needs.preflight.outputs.target_pages) }}
+      max-parallel: 2   # 동시 2페이지 처리
+      fail-fast: false  # 한 페이지 실패해도 나머지 계속
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt --quiet
+
+      - name: Execute sync
+        id: sync_exec
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          PAGE_ID: ${{ matrix.page.id }}
+          PAGE_LABEL: ${{ matrix.page.label }}
+          SYNC_MODE: ${{ needs.preflight.outputs.sync_mode }}
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          python automation/sync_runner.py
+
+      - name: Upload sync report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-report-${{ matrix.page.label }}
+          path: reports/sync_*.json
+          retention-days: 14
+
+  # ============================================================
+  # JOB 3: 감사 로그 & 실패 알림
+  # ============================================================
+  audit:
+    name: '📊 Audit & Notify'
+    runs-on: ubuntu-latest
+    needs: [preflight, sync]
+    if: always()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt --quiet
+
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sync-report-*
+          path: reports/
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Generate audit log
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          SYNC_STATUS: ${{ needs.sync.result }}
+          PREFLIGHT_STATUS: ${{ needs.preflight.result }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python automation/audit_logger.py
+
+      - name: Commit audit log to GitHub
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.sync_mode != 'dry_run'
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add audit_logs/ || true
+          git diff --cached --quiet || git commit -m "chore: audit log [${{ github.run_id }}] $(date '+%Y-%m-%d %H:%M KST')"
+          git push || true
