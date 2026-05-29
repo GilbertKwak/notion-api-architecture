@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "version": "1.1",
+    "updated": "2026-05-29",
+    "description": "Notion Page ID Map — Financial Terminal + Core workspace"
+  },
+  "pages": {
+    "C33-library":                    "35255ed436f0810f830be1feb1512c28",
+    "session-hub":                    "35155ed436f081fbb2f1c01d0b85a1b8",
+    "financial-terminal-hub":         "36e55ed436f081d1ae3fc3690fb60e86",
+    "financial-terminal-optimized":   "36e55ed436f081178bb4e7471c332379",
+    "c37-ai-ecosystem":               "36355ed436f081399b0be69361dd5812",
+    "pe-14-geopolitical":             "36f55ed436f081918324cbc5db052a8c",
+    "session-2026-05-29":             "36f55ed436f0814eaa99e301cce4f494"
+  },
+  "tags": {
+    "financial":  ["financial-terminal-hub", "financial-terminal-optimized", "pe-14-geopolitical"],
+    "session":    ["session-hub", "session-2026-05-29", "C33-library"],
+    "strategy":   ["c37-ai-ecosystem", "pe-14-geopolitical"],
+    "hub":        ["financial-terminal-hub", "session-hub"]
+  }
+}
